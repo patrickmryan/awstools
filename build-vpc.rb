@@ -29,6 +29,19 @@ class VpcBuilder
     
   end
   
+  def createInternetGateway
+    obj = self.executeAndParse("aws ec2 create-internet-gateway")
+    gw = obj['InternetGateway']
+    self.internetGatewayId=(gw["InternetGatewayId"])
+    return obj
+  end
+  
+  def attachInternetGateway
+    self.execute(
+    "aws ec2 attach-internet-gateway --vpc-id #{self.vpcId} " +
+    "--internet-gateway-id #{self.internetGatewayId}")
+  end
+
   def executeAndParse(cmd)
     text = self.execute(cmd)
     return JSON.parse(text)
@@ -40,63 +53,24 @@ class VpcBuilder
   end
   
   attr_accessor :vpcDoc, :publicSubnetDoc, :privateSubnetDoc
-  attr_accessor :vpcId, :publicSubnetId, :privateSubnetId
+  attr_accessor :vpcId, :publicSubnetId, :privateSubnetId, :internetGatewayId
   
 end
 
 
 builder = VpcBuilder.new()
 obj = builder.createBasicVpc('10.0.0.0/16',"Key=Name,Value=pmrVpc")
-puts obj
+#puts obj
 
 obj = builder.createSubnet('10.0.1.0/24','Key=Visibility,Value=Public')
-puts obj
+#puts obj
 
 obj = builder.createSubnet('10.0.2.0/24','Key=Visibility,Value=Private')
-puts obj
+#puts obj
+
+obj = builder.createInternetGateway()
+#puts obj
+builder.attachInternetGateway()
 
 
 exit
-
-
-# create the VPC 
-cmd = 'aws ec2 create-vpc --cidr-block 10.0.0.0/16'
-# undo = aws ec2 delete-vpc --vpc-id {vpc id}
-puts cmd
-result = `#{cmd}`
-puts result
-puts "exit code = " + $?.to_s
-obj = JSON.parse(result)
-# puts obj
-vpc = obj['Vpc']
-vpcId = vpc['VpcId']
-puts vpcId
-
-cmd = "aws ec2 create-tags --resources #{vpcId} --tags Key=Name,Value=pmrVpc"
-puts cmd
-`#{cmd}`
-
-# create the public subnet
-cmd = "aws ec2 create-subnet --vpc-id #{vpcId} --cidr-block 10.0.1.0/24"
-puts cmd
-result = `#{cmd}`
-obj = JSON.parse(result)
-subnet = obj['Subnet']
-publicSubnetId = subnet['SubnetId']
-puts "publicSubnetId = " + publicSubnetId
-cmd = "aws ec2 create-tags --resources #{publicSubnetId} --tags Key=Visibility,Value=Public"
-puts cmd
-`#{cmd}`
-
-## create the private subnet
-#cmd = "aws ec2 create-subnet --vpc-id #{vpcId} --cidr-block 10.0.2.0/24"
-#puts cmd
-#result = `#{cmd}`
-#subnet = JSON.parse(result)
-#privateSubnetId = result['Subnet']['SubnetId']
-#puts "privateSubnetId = " + publicSubnetId
-#cmd = "aws ec2 create-tags --resources #{privateSubnetId} --tags Key=Visibility,Value=Private"
-#puts cmd
-#`#{cmd}`
-
-
