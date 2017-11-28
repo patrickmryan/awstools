@@ -48,6 +48,14 @@ end
 builder = VpcBuilder.new()
 obj = builder.createBasicVpc('10.0.0.0/16',"Key=Name,Value=pmrVpc")
 puts obj
+
+obj = builder.createSubnet('10.0.1.0/24','Key=Visibility,Value=Public')
+puts obj
+
+obj = builder.createSubnet('10.0.2.0/24','Key=Visibility,Value=Private')
+puts obj
+
+
 exit
 
 
