@@ -4,7 +4,7 @@ require 'json'
 #  Script to execute the steps in http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-subnets-commands-example.html
 #
 #
-# prereq - the user has already done 'aws configure' and the authenticated used has sufficient rights
+# prereq - the user has already done 'aws configure' and the authenticated user has sufficient rights
 # to configure a VPC
 
 class VpcBuilder
@@ -131,4 +131,5 @@ builder.makeSubnetPublic()
 puts 'creating sg for ssh'
 builder.createSecurityGroupForSSH()
 
-exit
+# still need to at NAT gateway to provide way out to Internet for private subnet
+
