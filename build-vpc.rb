@@ -128,7 +128,6 @@ builder.attachInternetGateway()
 # Step 3
 
 builder.makeSubnetPublic()
-puts 'creating sg for ssh'
 builder.createSecurityGroupForSSH()
 
 # still need to at NAT gateway to provide way out to Internet for private subnet
