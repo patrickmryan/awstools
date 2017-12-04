@@ -1,4 +1,5 @@
 require 'json'
+require 'aws-sdk'
 
 #
 #  Script to execute the steps in http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-subnets-commands-example.html
@@ -9,60 +10,99 @@ require 'json'
 
 class VpcBuilder
   def createBasicVpc(cidrBlock,tags)
-    # create the VPC
-    obj = self.executeAndParse("aws ec2 create-vpc --cidr-block #{cidrBlock}")
- 
-    vpc = obj['Vpc']
-    id = vpc['VpcId']
-    self.vpcId=(id)
+    resource = Aws::EC2::Resource.new(region: self.region())
+    self.ec2=(resource)
+    newVpc = self.ec2.create_vpc({cidr_block: cidrBlock})
+    self.vpc=(newVpc)
+    self.vpc.modify_attribute({enable_dns_support: {value: true}})
+    self.vpc.modify_attribute({enable_dns_hostnames: {value: true}})
+    self.vpc().create_tags({tags: tags})
     
-    # add the tags
-    self.execute("aws ec2 create-tags --resources #{self.vpcId} --tags #{tags}")
-          
-    # return the full JSON doc
-    return obj
+    puts "created vpc with id " + self.vpc().id
+    
+    return newVpc
+    
+#    # create the VPC
+#    obj = self.executeAndParse("aws ec2 create-vpc --cidr-block #{cidrBlock}")
+# 
+#    vpc = obj['Vpc']
+#    id = vpc['VpcId']
+#    self.vpcId=(id)
+#    
+#    # add the tags
+#    self.execute("aws ec2 create-tags --resources #{self.vpcId} --tags #{tags}")
+#          
+#    # return the full JSON doc
+#    return obj
+#    
   end
 
   def createSubnet(cidrBlock,tags)
-    obj = self.executeAndParse("aws ec2 create-subnet --vpc-id #{self.vpcId} --cidr-block #{cidrBlock}")
-       
-    subnet = obj['Subnet']
-    id = subnet['SubnetId']
-      
-    #self.publicSubnetId=(subnet['SubnetId'])
-    #puts "publicSubnetId = " + publicSubnetId
-    self.execute("aws ec2 create-tags --resources #{id} --tags #{tags}")
-    return obj
+    
+    subnet = self.ec2.create_subnet(
+      {vpc_id: self.vpc.id, 
+        cidr_block: cidrBlock, 
+        availability_zone: self.az})
+    subnet.create_tags({tags: tags})
+    
+    puts "created subnet with id " + subnet.id
+    return subnet
+    
+#    obj = self.executeAndParse("aws ec2 create-subnet --vpc-id #{self.vpcId} --cidr-block #{cidrBlock}")
+#       
+#    subnet = obj['Subnet']
+#    id = subnet['SubnetId']
+#      
+#    #self.publicSubnetId=(subnet['SubnetId'])
+#    #puts "publicSubnetId = " + publicSubnetId
+#    self.execute("aws ec2 create-tags --resources #{id} --tags #{tags}")
+#    return obj
+    
   end
   
   def createInternetGateway
-    obj = self.executeAndParse("aws ec2 create-internet-gateway")
-    gw = obj['InternetGateway']
-    self.internetGatewayId=(gw["InternetGatewayId"])
-    return obj
+    
+    gw = self.ec2.create_internet_gateway
+    gw.attach_to_vpc(vpc_id: self.vpc().id)    
+    puts "created internet gateway " + gw.id
+    
+    self.igw=(gw)
+    return gw
+    
+#    obj = self.executeAndParse("aws ec2 create-internet-gateway")
+#    gw = obj['InternetGateway']
+#    self.internetGatewayId=(gw["InternetGatewayId"])
+#    return obj
   end
   
-  def attachInternetGateway
-    self.execute(
-    "aws ec2 attach-internet-gateway --vpc-id #{self.vpcId} " +
-    "--internet-gateway-id #{self.internetGatewayId}")
-  end
+#  def attachInternetGateway
+#     
+#    self.execute(
+#    "aws ec2 attach-internet-gateway --vpc-id #{self.vpcId} " +
+#    "--internet-gateway-id #{self.internetGatewayId}")
+#    
+#  end
   
   def makeSubnetPublic
-    obj = self.executeAndParse("aws ec2 create-route-table --vpc-id #{self.vpcId}")
-    table = obj['RouteTable']
-    self.routeTableId=(table['RouteTableId'])
-
-    self.execute("aws ec2 create-route --route-table-id #{self.routeTableId} "+
-    "--destination-cidr-block 0.0.0.0/0 --gateway-id #{self.internetGatewayId}")
-
-    # this just confirms that the above worked
-    #obj = self.executeAndParse("aws ec2 describe-route-tables --route-table-id #{self.routeTableId}")
-    #return obj
     
-    self.execute("aws ec2 associate-route-table --subnet-id #{self.publicSubnetId} --route-table-id #{self.routeTableId}")  
-    self.execute("aws ec2 modify-subnet-attribute --subnet-id #{self.publicSubnetId} --map-public-ip-on-launch")
+    table = self.ec2.create_route_table({vpc_id: self.vpc.id})
+ #   table.create_tags({tags: tags})
+    table.create_route({destination_cidr_block: '0.0.0.0/0', gateway_id: self.igw.id})
+    table.associate_with_subnet({subnet_id: self.publicSubnet.id})
+      
+    puts "created table with id " + table.id
+
     
+#    obj = self.executeAndParse("aws ec2 create-route-table --vpc-id #{self.vpcId}")
+#    table = obj['RouteTable']
+#    self.routeTableId=(table['RouteTableId'])
+#
+#    self.execute("aws ec2 create-route --route-table-id #{self.routeTableId} "+
+#    "--destination-cidr-block 0.0.0.0/0 --gateway-id #{self.internetGatewayId}")
+#
+#    self.execute("aws ec2 associate-route-table --subnet-id #{self.publicSubnetId} --route-table-id #{self.routeTableId}")  
+#    self.execute("aws ec2 modify-subnet-attribute --subnet-id #{self.publicSubnetId} --map-public-ip-on-launch")
+#    
   end
 
   def createSecurityGroupForSSH
@@ -102,33 +142,45 @@ class VpcBuilder
     return `#{cmd}`
   end
   
+  def region
+    return 'us-east-1'
+  end
+  
+  def az
+    return 'us-east-1a'
+  end
+  
   attr_accessor :vpcId, :publicSubnetId, :privateSubnetId, :internetGatewayId, :routeTableId, :sshSecGroupId
+  attr_accessor :ec2, :vpc, :igw, :publicSubnet, :privateSubnet
   
 end
 
 # Step 1
 
 builder = VpcBuilder.new()
-builder.createBasicVpc('10.0.0.0/16',"Key=Name,Value=pmrVpc")
+builder.createBasicVpc('10.0.0.0/16', [{key: 'Name', value: 'pmrVpc'}])
 
-obj = builder.createSubnet('10.0.1.0/24','Key=Visibility,Value=Public')
-subnet = obj['Subnet']
-builder.publicSubnetId=(subnet['SubnetId'])
+# was "Key=Name,Value=pmrVpc"
+# [{key: 'Name', value: 'pmrVpc'}]
 
-obj = builder.createSubnet('10.0.2.0/24','Key=Visibility,Value=Private')
-subnet = obj['Subnet']
-builder.privateSubnetId=(subnet['SubnetId'])
+obj = builder.createSubnet('10.0.1.0/24',[{key: 'Visibility' ,value: 'Public'}])
+#subnet = obj['Subnet']
+builder.publicSubnet=(obj)
+
+obj = builder.createSubnet('10.0.2.0/24',[{key: 'Visibility' ,value: 'Private'}])
+#subnet = obj['Subnet']
+builder.privateSubnet=(obj)
 
 
 # Step 2
 
 builder.createInternetGateway()
-builder.attachInternetGateway()
+# builder.attachInternetGateway()
 
 # Step 3
 
 builder.makeSubnetPublic()
-builder.createSecurityGroupForSSH()
+#builder.createSecurityGroupForSSH()
 
 # still need to at NAT gateway to provide way out to Internet for private subnet
 
