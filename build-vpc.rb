@@ -1,4 +1,4 @@
-require 'json'
+## require 'json'
 require 'aws-sdk'
 
 #
@@ -13,7 +13,7 @@ class VpcBuilder
   def createBasicVpc(cidrBlock,tags)
     resource = Aws::EC2::Resource.new(region: self.region())
     self.ec2resource=(resource)
-    
+
     newVpc = self.ec2resource.create_vpc({cidr_block: cidrBlock})
     self.vpc=(newVpc)
     self.vpc.modify_attribute({enable_dns_support: {value: true}})
@@ -71,7 +71,7 @@ class VpcBuilder
     if (sg)
       puts "found security group " + sg.to_s
     end
-    
+
     if (!sg)
 
       #      obj = self.executeAndParse("aws ec2 create-security-group --group-name #{sgName} " +
@@ -124,13 +124,25 @@ class VpcBuilder
 
   def findSecurityGroupNamed(ec2client, sgName)
 
-    result = ec2client.describe_security_groups
-    
-    puts "found security groups:"
-    puts "---"
-    result.security_groups.each { |g| puts "#{g.group_id} -> #{g.group_name}" }
-    puts "---"
-    
+    begin
+
+      result = ec2client.describe_security_groups({
+        filters: [
+        { name: "vpc-id", values: [self.vpc.id]},
+        { name: "group-name", values: [sgName]} ]
+      })
+
+    rescue Aws::EC2::Errors::InvalidGroupNotFound
+      result = []
+      puts "exception raised - InvalidGroupNotFound"
+
+    end
+
+#    puts "found security groups:"
+#    puts "---"
+#    result.security_groups.each { |g| puts "#{g.group_id} -> #{g.group_name}" }
+#    puts "---"
+
     return result.security_groups.detect { | g | g.vpc_id == self.vpc.id &&  g.group_name == sgName }
 
     #    obj = self.executeAndParse("aws ec2 describe-security-groups --filters Name=vpc-id,Values=#{self.vpcId}")
@@ -150,16 +162,16 @@ class VpcBuilder
     }
   end
 
-#  def executeAndParse(cmd)
-#    text = self.execute(cmd)
-#    return JSON.parse(text)
-#
-#  end
-#
-#  def execute(cmd)
-#    puts cmd
-#    return `#{cmd}`
-#  end
+  #  def executeAndParse(cmd)
+  #    text = self.execute(cmd)
+  #    return JSON.parse(text)
+  #
+  #  end
+  #
+  #  def execute(cmd)
+  #    puts cmd
+  #    return `#{cmd}`
+  #  end
 
   def region
     return 'us-east-1'
@@ -169,7 +181,7 @@ class VpcBuilder
     return 'us-east-1a'
   end
 
-#  attr_accessor :vpcId, :publicSubnetId, :privateSubnetId, :internetGatewayId, :routeTableId, :sshSecGroupId
+  #  attr_accessor :vpcId, :publicSubnetId, :privateSubnetId, :internetGatewayId, :routeTableId, :sshSecGroupId
   attr_accessor :ec2resource, :vpc, :igw, :publicSubnet, :privateSubnet, :sshSecurityGroup
 
 end
