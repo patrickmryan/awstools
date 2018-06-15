@@ -212,5 +212,5 @@ builder.createInternetGateway()
 builder.makeSubnetPublic()
 builder.createSecurityGroupForSSH()
 
-# still need to at NAT gateway to provide way out to Internet for private subnet
+# still need to add NAT gateway to provide way out to Internet for private subnet
 
