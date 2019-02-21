@@ -11,7 +11,7 @@ require 'aws-sdk'
 
 class VpcBuilder
   def createBasicVpc(cidrBlock,tags)
-    resource = Aws::EC2::Resource.new(region: self.region())
+    resource = Aws::EC2::Resource.new(region: self.defaultRegion())
     self.ec2resource=(resource)
 
     newVpc = self.ec2resource.create_vpc({cidr_block: cidrBlock})
@@ -31,7 +31,7 @@ class VpcBuilder
     subnet = self.ec2resource.create_subnet(
     {vpc_id: self.vpc.id,
       cidr_block: cidrBlock,
-      availability_zone: self.az})
+      availability_zone: self.defaultAZ})
 
     puts "created subnet with id " + subnet.id
     subnet.create_tags({tags: tags})
@@ -64,7 +64,7 @@ class VpcBuilder
 
   def createSecurityGroupForSSH
 
-    ec2client = Aws::EC2::Client.new(region: self.region)
+    ec2client = Aws::EC2::Client.new(region: self.defaultRegion)
     sgName = 'SSHAccess'
 
     sg = self.findSecurityGroupNamed(ec2client, sgName)
@@ -153,6 +153,18 @@ class VpcBuilder
 
   end
 
+  def createNATGateway
+    # allocate the elastic IP
+    allocate_address_result = ec2resource.allocate_address(domain: 'vpc')
+    # associate the address with the public subnet
+    associate_address_result = ec2.associate_address(
+      allocation_id: allocate_address_result.allocation_id,
+      #instance_id: instance_id
+      network_interface_id: ""
+    )
+  end
+
+
   def sshPermissions
     return {
       ip_protocol: "tcp",
@@ -173,11 +185,11 @@ class VpcBuilder
   #    return `#{cmd}`
   #  end
 
-  def region
+  def defaultRegion
     return 'us-east-1'
   end
 
-  def az
+  def defaultAZ
     return 'us-east-1a'
   end
 
@@ -186,19 +198,31 @@ class VpcBuilder
 
 end
 
-# Step 1
+# Step 0
+# things to parameterize on command line:
+#  vpc name, region, defaultAZ, key for instances
 
+# Step 1
+name = 'pmrVpc'
 builder = VpcBuilder.new()
-builder.createBasicVpc('10.0.0.0/16', [{key: 'Name', value: 'pmrVpc'}])
+builder.createBasicVpc('10.0.0.0/16', [{key: 'Name', value: name}])
 
 # was "Key=Name,Value=pmrVpc"
 # [{key: 'Name', value: 'pmrVpc'}]
 
-obj = builder.createSubnet('10.0.1.0/24',[{key: 'Visibility' ,value: 'Public'}])
+obj = builder.createSubnet('10.0.1.0/24',
+  [
+    {key: 'Visibility' ,value: 'Public'},
+    {key: 'Name', value: "#{name}-public"}
+    ])
 #subnet = obj['Subnet']
 builder.publicSubnet=(obj)
 
-obj = builder.createSubnet('10.0.2.0/24',[{key: 'Visibility' ,value: 'Private'}])
+obj = builder.createSubnet('10.0.2.0/24',
+  [
+    {key: 'Visibility' ,value: 'Private'},
+    {key: 'Name', value: "#{name}-private"}
+  ])
 #subnet = obj['Subnet']
 builder.privateSubnet=(obj)
 
@@ -214,3 +238,13 @@ builder.createSecurityGroupForSSH()
 
 # still need to add NAT gateway to provide way out to Internet for private subnet
 
+# https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html
+
+##builder.createNATGateway()
+
+# allocate an elastic IP
+# create a NET gw with the public subnet and elastic IP
+# update route table of private subnet.
+# add a new route to point internet traffic 0.0.0.0/0 to the NAT gw
+
+# create ec2 instances in each subnet?
