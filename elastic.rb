@@ -3,18 +3,16 @@ require 'aws-sdk'
 
 # allocate an elastic IP
 # create a NET gw with the public subnet and elastic IP
-# update route table of private subnet.
+# get the route table of private subnet.
 # add a new route to point internet traffic 0.0.0.0/0 to the NAT gw
 
 region = "us-east-1"
-privateSubnet = "subnet-0f8ce93f99667a687"
-publicSubnet  = "subnet-014b2d15eeb9bef65"
+vpcId = "vpc-0a6242c9cc8517576"
+privateSubnetId = "subnet-0f8ce93f99667a687"
+publicSubnetId  = "subnet-014b2d15eeb9bef65"
 
 
-
-
-
-ec2client = Aws::EC2::Client.new(region: 'us-east-1')
+ec2client = Aws::EC2::Client.new(region: region)
 
 instance_id = "i-0116dc3c6de929698" # For example, "i-0a123456b7c8defg9"
 
@@ -51,37 +49,67 @@ allocate_address_result = ec2client.allocate_address({
   domain: "vpc"
 })
 
+# puts "allocate address result\n"
+# puts(allocate_address_result.to_s)
+# puts("\n")
+
 #puts "\nAfter allocating the address for instance, but before associating the address with the instance..."
 #display_addresses(ec2client, instance_id)
 
 
-
 # create a NAT gw with the public subnet and elastic IP
 # https://docs.aws.amazon.com/sdk-for-ruby/v3/api/Aws/EC2/Client.html#create_nat_gateway-instance_method
+# https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html
 
-resp = e2client.create_nat_gateway({
+resp = ec2client.create_nat_gateway({
   allocation_id: allocate_address_result.allocation_id,
-  subnet_id: publicSubnet,
+  subnet_id: publicSubnetId,
 })
 
-# update route table of private subnet.
+# get the route table of private subnet.
 # add a new route to point internet traffic 0.0.0.0/0 to the NAT gw
 
-
-
-puts "\nAssociating the address with the instance..."
-associate_address_result = ec2client.associate_address({
-  allocation_id: allocate_address_result.allocation_id,
-  instance_id: instance_id,
+# need to get network interface ID for public subnet
+# https://docs.aws.amazon.com/sdk-for-ruby/v3/api/Aws/EC2/Client.html#describe_subnets-instance_method
+resp = ec2client.describe_subnets({
+  filters: [
+    {
+      name: "vpc-id", values: [vpcId]
+    }
+  ]
 })
 
-puts "\nAfter associating the address with the instance, but before releasing the address from the instance..."
-display_addresses(ec2client, instance_id)
+# for subnet in resp[:subnets]
+#   puts subnet.to_s
+#   puts("\n")
+# end
 
-puts "\nReleasing the address from the instance..."
-ec2client.release_address({
-  allocation_id: allocate_address_result.allocation_id,
-})
+subnet = (resp[:subnets]).detect{ |net| net[:subnet_id] == privateSubnetId}
+puts subnet.to_s
+puts("\n")
 
-puts "\nAfter releasing the address from the instance..."
-display_addresses(ec2client, instance_id)
+exit
+
+# https://docs.aws.amazon.com/sdk-for-ruby/v3/api/Aws/EC2/Client.html#describe_network_interfaces-instance_method
+
+# puts "\nAssociating the address with the instance..."
+# associate_address_result = ec2client.associate_address({
+#   allocation_id: allocate_address_result.allocation_id,
+#   #instance_id: instance_id,
+#   network_interface_id:
+# })
+
+
+exit
+
+#
+# puts "\nAfter associating the address with the instance, but before releasing the address from the instance..."
+# display_addresses(ec2client, instance_id)
+#
+# puts "\nReleasing the address from the instance..."
+# ec2client.release_address({
+#   allocation_id: allocate_address_result.allocation_id,
+# })
+#
+# puts "\nAfter releasing the address from the instance..."
+# display_addresses(ec2client, instance_id)
