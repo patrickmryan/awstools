@@ -1,5 +1,6 @@
-## require 'json'
 require 'aws-sdk'
+require 'pry'
+
 
 #
 #  Script to execute the steps in http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-subnets-commands-example.html
@@ -10,9 +11,13 @@ require 'aws-sdk'
 # to configure a VPC
 
 class VpcBuilder
+  def initialize
+    self.ec2resource=(Aws::EC2::Resource.new(region: self.defaultRegion()))
+    self.ec2client=(Aws::EC2::Client.new(region: self.defaultRegion))
+
+  end
+
   def createBasicVpc(cidrBlock,tags)
-    resource = Aws::EC2::Resource.new(region: self.defaultRegion())
-    self.ec2resource=(resource)
 
     newVpc = self.ec2resource.create_vpc({cidr_block: cidrBlock})
     self.vpc=(newVpc)
@@ -40,11 +45,13 @@ class VpcBuilder
 
   end
 
-  def createInternetGateway
+  def createInternetGateway(tags)
 
     gw = self.ec2resource.create_internet_gateway
     gw.attach_to_vpc(vpc_id: self.vpc().id)
     puts "created internet gateway " + gw.id
+
+    gw.create_tags({tags: tags})
 
     self.igw=(gw)
     return gw
@@ -64,10 +71,10 @@ class VpcBuilder
 
   def createSecurityGroupForSSH
 
-    ec2client = Aws::EC2::Client.new(region: self.defaultRegion)
+    #ec2client = Aws::EC2::Client.new(region: self.defaultRegion)
     sgName = 'SSHAccess'
 
-    sg = self.findSecurityGroupNamed(ec2client, sgName)
+    sg = self.findSecurityGroupNamed(sgName)
     if (sg)
       puts "found security group " + sg.to_s
     end
@@ -81,13 +88,13 @@ class VpcBuilder
 
       begin
 
-        result = ec2client.create_security_group(
+        result = self.ec2client().create_security_group(
         {group_name: sgName,
           description: 's.g. for ' + sgName,
           vpc_id: self.vpc.id})
         #self.sshSecurityGroup=(sg)
 
-        ec2client.authorize_security_group_ingress({
+        self.ec2client().authorize_security_group_ingress({
           group_id: result.group_id,
           ip_permissions: [
           self.sshPermissions
@@ -117,21 +124,17 @@ class VpcBuilder
       #      }]
       #      }]
       #    })
-
-      #self.execute("aws ec2 authorize-security-group-ingress --group-id #{self.sshSecGroupId} --protocol tcp --port 22 --cidr 0.0.0.0/0")
     end
   end
 
-  def findSecurityGroupNamed(ec2client, sgName)
+  def findSecurityGroupNamed(sgName)
 
     begin
-
-      result = ec2client.describe_security_groups({
+      result = self.ec2client().describe_security_groups({
         filters: [
         { name: "vpc-id", values: [self.vpc.id]},
         { name: "group-name", values: [sgName]} ]
       })
-
     rescue Aws::EC2::Errors::InvalidGroupNotFound
       result = []
       puts "exception raised - InvalidGroupNotFound"
@@ -145,23 +148,105 @@ class VpcBuilder
 
     return result.security_groups.detect { | g | g.vpc_id == self.vpc.id &&  g.group_name == sgName }
 
-    #    obj = self.executeAndParse("aws ec2 describe-security-groups --filters Name=vpc-id,Values=#{self.vpcId}")
-    #    groups = obj['SecurityGroups']
-    #    target = groups.detect { | g | g['GroupName'] == sgName }
-    #
-    #    return target  # might be nil
 
   end
 
-  def createNATGateway
+  def createNATGateway(tags)
+    # allocate an elastic IP
+    # create a NET gw with the public subnet and elastic IP
+    # update route table of private subnet.
+    # add a new route to point internet traffic 0.0.0.0/0 to the NAT gw
+
+
     # allocate the elastic IP
-    allocate_address_result = ec2resource.allocate_address(domain: 'vpc')
-    # associate the address with the public subnet
-    associate_address_result = ec2.associate_address(
+    allocate_address_result = self.ec2client().allocate_address(domain: 'vpc')
+
+    # create a NAT gw with the public subnet and elastic IP
+    # https://docs.aws.amazon.com/sdk-for-ruby/v3/api/Aws/EC2/Client.html#create_nat_gateway-instance_method
+    # https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html
+
+    resp = self.ec2client().create_nat_gateway({
       allocation_id: allocate_address_result.allocation_id,
-      #instance_id: instance_id
-      network_interface_id: ""
-    )
+      subnet_id: self.publicSubnet().subnet_id,
+    })
+
+    nat_gateway_id = resp.nat_gateway.nat_gateway_id
+
+    # have to wait until it's ready
+    # resp.nat_gateway.state #=> String, one of "pending", "failed",
+    #       "available", "deleting", "deleted"
+
+    nat_gw_available = false
+    while (!nat_gw_available)
+      sleep(5)  # need something better
+      resp = self.ec2client.describe_nat_gateways({
+        filter: [
+          {name: "nat-gateway-id",values: [nat_gateway_id]},
+          {name: "vpc-id",values: [self.vpc.id]}
+        ]})
+        gw_status = resp.nat_gateways.detect { | gw | gw.nat_gateway_id == nat_gateway_id}
+        puts("#{nat_gateway_id} status is #{gw_status.state}\n")
+        nat_gw_available = (gw_status.state == "available")
+
+    end
+
+
+
+    puts("creating route table\n")
+    new_table = self.ec2client().create_route_table({vpc_id: self.vpc.id})
+    puts("created:\n")
+    puts new_table.to_s
+    puts("\n")
+
+    # create route
+    resp = self.ec2client().create_route({
+      destination_cidr_block: "0.0.0.0/0",  # internet
+      gateway_id: nat_gateway_id,
+      route_table_id: (new_table.route_table[:route_table_id]),
+    })
+
+
+    # need to first disassociate the private subnet from the default
+    # route table
+
+    resp = self.ec2client().describe_route_tables({
+      filters: [
+        { name: "vpc-id", values: [self.vpc.id]},
+        { name: "association.subnet-id", values: [self.privateSubnet().id]}
+      ],
+    })
+
+    # find the association between the private subnet and the default route
+    assoc = nil
+    for table in resp.route_tables.each
+      a = table.associations.detect { | a | a.subnet_id == self.privateSubnet().id }
+      if (a)
+        assoc = a
+      end
+    end
+
+    # disassociate
+    resp = self.ec2client().disassociate_route_table({
+      association_id: (assoc.route_table_association_id)
+    })
+
+    puts("associating new route table with private subnet\n")
+    resp = self.ec2client().associate_route_table({
+      route_table_id: (new_table.route_table[:route_table_id]),
+      subnet_id: privateSubnetId})
+    puts("created:\n")
+    puts resp.to_s
+    puts("\n")
+
+
+
+    # # associate the address with the public subnet
+    # associate_address_result = ec2.associate_address(
+    #   allocation_id: allocate_address_result.allocation_id,
+    #   #instance_id: instance_id
+    #   network_interface_id: ""
+    # )
+
   end
 
 
@@ -194,7 +279,8 @@ class VpcBuilder
   end
 
   #  attr_accessor :vpcId, :publicSubnetId, :privateSubnetId, :internetGatewayId, :routeTableId, :sshSecGroupId
-  attr_accessor :ec2resource, :vpc, :igw, :publicSubnet, :privateSubnet, :sshSecurityGroup
+  attr_accessor :ec2resource, :ec2client , :vpc, :igw,
+    :publicSubnet, :privateSubnet, :sshSecurityGroup
 
 end
 
@@ -228,7 +314,7 @@ builder.privateSubnet=(obj)
 
 # Step 2
 
-builder.createInternetGateway()
+builder.createInternetGateway([{key: 'Name', value: name}])
 # builder.attachInternetGateway()
 
 # Step 3
@@ -240,11 +326,7 @@ builder.createSecurityGroupForSSH()
 
 # https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html
 
-##builder.createNATGateway()
+builder.createNATGateway([{key: 'Name', value: name}])
 
-# allocate an elastic IP
-# create a NET gw with the public subnet and elastic IP
-# update route table of private subnet.
-# add a new route to point internet traffic 0.0.0.0/0 to the NAT gw
 
 # create ec2 instances in each subnet?
