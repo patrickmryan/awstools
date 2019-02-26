@@ -176,9 +176,13 @@ class VpcBuilder
     # resp.nat_gateway.state #=> String, one of "pending", "failed",
     #       "available", "deleting", "deleted"
 
-    nat_gw_available = false
-    while (!nat_gw_available)
-      sleep(5)  # need something better
+    puts("initializing NAT gw #{nat_gateway_id}, waiting until available\n")
+    # time now
+    start = Time.now.to_i
+    gw_status = nil
+    # loop until NAT gw is available
+    while (!(gw_status && gw_status.state == "available"))
+      sleep(10)  # need something better
       resp = self.ec2client.describe_nat_gateways({
         filter: [
           {name: "nat-gateway-id",values: [nat_gateway_id]},
@@ -186,15 +190,17 @@ class VpcBuilder
         ]})
         gw_status = resp.nat_gateways.detect { | gw | gw.nat_gateway_id == nat_gateway_id}
         puts("#{nat_gateway_id} status is #{gw_status.state}\n")
-        nat_gw_available = (gw_status.state == "available")
 
     end
-
+    finish = Time.now.to_i
+    #elapsed = finish-start
+    puts("#{finish-start} seconds to create NAT gw\n")
+    # time now
 
 
     puts("creating route table\n")
     new_table = self.ec2client().create_route_table({vpc_id: self.vpc.id})
-    puts("created:\n")
+    #puts("created: #{new_table[:route_table_id]}\n")
     puts new_table.to_s
     puts("\n")
 
@@ -204,7 +210,6 @@ class VpcBuilder
       gateway_id: nat_gateway_id,
       route_table_id: (new_table.route_table[:route_table_id]),
     })
-
 
     # need to first disassociate the private subnet from the default
     # route table
@@ -226,26 +231,23 @@ class VpcBuilder
     end
 
     # disassociate
-    resp = self.ec2client().disassociate_route_table({
-      association_id: (assoc.route_table_association_id)
-    })
+    if (assoc)
+      puts("disassociating #{assoc.route_table_association_id}\n")
+      resp = self.ec2client().disassociate_route_table({
+        association_id: (assoc.route_table_association_id)
+        })
+    else
+      puts("no rt association found for #{self.privateSubnet().id}\n")
+    end
 
+    # associate the route table with the private subnet
     puts("associating new route table with private subnet\n")
     resp = self.ec2client().associate_route_table({
       route_table_id: (new_table.route_table[:route_table_id]),
-      subnet_id: privateSubnetId})
-    puts("created:\n")
-    puts resp.to_s
-    puts("\n")
-
-
-
-    # # associate the address with the public subnet
-    # associate_address_result = ec2.associate_address(
-    #   allocation_id: allocate_address_result.allocation_id,
-    #   #instance_id: instance_id
-    #   network_interface_id: ""
-    # )
+      subnet_id: self.privateSubnet().id})
+    puts("created: #{resp[:association_id]}\n")
+    # puts resp.to_s
+    # puts("\n")
 
   end
 
@@ -258,17 +260,6 @@ class VpcBuilder
       ip_ranges: [{cidr_ip: "0.0.0.0/0"}]
     }
   end
-
-  #  def executeAndParse(cmd)
-  #    text = self.execute(cmd)
-  #    return JSON.parse(text)
-  #
-  #  end
-  #
-  #  def execute(cmd)
-  #    puts cmd
-  #    return `#{cmd}`
-  #  end
 
   def defaultRegion
     return 'us-east-1'
