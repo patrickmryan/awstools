@@ -1,6 +1,5 @@
 require 'aws-sdk'
-require 'pry'
-
+##require 'pry'
 
 #
 #  Script to execute the steps in http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-subnets-commands-example.html
@@ -40,7 +39,6 @@ class VpcBuilder
 
     puts "created subnet with id " + subnet.id
     subnet.create_tags({tags: tags})
-
     return subnet
 
   end
@@ -80,12 +78,6 @@ class VpcBuilder
     end
 
     if (!sg)
-
-      #      obj = self.executeAndParse("aws ec2 create-security-group --group-name #{sgName} " +
-      #      "--description 'Security group for SSH access' --vpc-id #{self.vpcId}")
-      #      self.sshSecGroupId=(obj['GroupId'])
-      #
-
       begin
 
         result = self.ec2client().create_security_group(
@@ -96,16 +88,7 @@ class VpcBuilder
 
         self.ec2client().authorize_security_group_ingress({
           group_id: result.group_id,
-          ip_permissions: [
-          self.sshPermissions
-          #,
-          #          {
-          #          ip_protocol: "tcp",
-          #          from_port: 22,
-          #          to_port: 22,
-          #          ip_ranges: [{cidr_ip: "0.0.0.0/0"}]
-          #          }
-          ]
+          ip_permissions: [self.sshPermissions]
         })
 
         puts "created security group " + result.to_s
@@ -141,11 +124,6 @@ class VpcBuilder
 
     end
 
-#    puts "found security groups:"
-#    puts "---"
-#    result.security_groups.each { |g| puts "#{g.group_id} -> #{g.group_name}" }
-#    puts "---"
-
     return result.security_groups.detect { | g | g.vpc_id == self.vpc.id &&  g.group_name == sgName }
 
 
@@ -154,8 +132,8 @@ class VpcBuilder
   def createNATGateway(tags)
     # allocate an elastic IP
     # create a NET gw with the public subnet and elastic IP
-    # update route table of private subnet.
     # add a new route to point internet traffic 0.0.0.0/0 to the NAT gw
+    # update route table of private subnet.
 
 
     # allocate the elastic IP
@@ -193,10 +171,7 @@ class VpcBuilder
 
     end
     finish = Time.now.to_i
-    #elapsed = finish-start
     puts("#{finish-start} seconds to create NAT gw\n")
-    # time now
-
 
     puts("creating route table\n")
     new_table = self.ec2client().create_route_table({vpc_id: self.vpc.id})
@@ -246,11 +221,8 @@ class VpcBuilder
       route_table_id: (new_table.route_table[:route_table_id]),
       subnet_id: self.privateSubnet().id})
     puts("created: #{resp[:association_id]}\n")
-    # puts resp.to_s
-    # puts("\n")
 
   end
-
 
   def sshPermissions
     return {
@@ -269,7 +241,6 @@ class VpcBuilder
     return 'us-east-1a'
   end
 
-  #  attr_accessor :vpcId, :publicSubnetId, :privateSubnetId, :internetGatewayId, :routeTableId, :sshSecGroupId
   attr_accessor :ec2resource, :ec2client , :vpc, :igw,
     :publicSubnet, :privateSubnet, :sshSecurityGroup
 
@@ -313,11 +284,9 @@ builder.createInternetGateway([{key: 'Name', value: name}])
 builder.makeSubnetPublic()
 builder.createSecurityGroupForSSH()
 
-# still need to add NAT gateway to provide way out to Internet for private subnet
-
+# Step 4
 # https://docs.aws.amazon.com/vpc/latest/userguide/vpc-nat-gateway.html
 
 builder.createNATGateway([{key: 'Name', value: name}])
-
 
 # create ec2 instances in each subnet?
