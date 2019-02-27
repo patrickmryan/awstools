@@ -1,5 +1,5 @@
 require 'aws-sdk'
-##require 'pry'
+require 'byebug'
 
 #
 #  Script to execute the steps in http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-subnets-commands-example.html
@@ -12,8 +12,11 @@ require 'aws-sdk'
 class VpcBuilder
   def initialize
     self.ec2resource=(Aws::EC2::Resource.new(region: self.defaultRegion()))
-    self.ec2client=(Aws::EC2::Client.new(region: self.defaultRegion))
 
+  end
+
+  def ec2client
+    return self.ec2resource.client
   end
 
   def createBasicVpc(cidrBlock,tags)
@@ -75,38 +78,23 @@ class VpcBuilder
     sg = self.findSecurityGroupNamed(sgName)
     if (sg)
       puts "found security group " + sg.to_s
-    end
-
-    if (!sg)
+    else
       begin
-
-        result = self.ec2client().create_security_group(
-        {group_name: sgName,
-          description: 's.g. for ' + sgName,
-          vpc_id: self.vpc.id})
-        #self.sshSecurityGroup=(sg)
+        sg = self.ec2client().create_security_group(
+          {group_name: sgName,
+            description: 's.g. for ' + sgName,
+            vpc_id: self.vpc.id})
 
         self.ec2client().authorize_security_group_ingress({
-          group_id: result.group_id,
+          group_id: sg.group_id,
           ip_permissions: [self.sshPermissions]
         })
 
-        puts "created security group " + result.to_s
+        puts("created security group #{sg.group_id}\n")
 
       rescue Aws::EC2::Errors::InvalidGroupDuplicate
         puts "A security group with the name '#{sgName}' already exists."
       end
-
-      #    sg.authorize_egress({
-      #      ip_permissions: [{
-      #      ip_protocol: 'tcp',
-      #      from_port: 22,
-      #      to_port: 22,
-      #      ip_ranges: [
-      #      {cidr_ip: '0.0.0.0/0'
-      #      }]
-      #      }]
-      #    })
     end
   end
 
@@ -173,54 +161,18 @@ class VpcBuilder
     finish = Time.now.to_i
     puts("#{finish-start} seconds to create NAT gw\n")
 
-    puts("creating route table\n")
-    new_table = self.ec2client().create_route_table({vpc_id: self.vpc.id})
-    #puts("created: #{new_table[:route_table_id]}\n")
-    puts new_table.to_s
-    puts("\n")
+    new_table = self.ec2resource().create_route_table({vpc_id: self.vpc.id})
+    puts ("created route table #{new_table.id}\n")
 
-    # create route
-    resp = self.ec2client().create_route({
+    new_table.create_route({
       destination_cidr_block: "0.0.0.0/0",  # internet
-      gateway_id: nat_gateway_id,
-      route_table_id: (new_table.route_table[:route_table_id]),
+      gateway_id: nat_gateway_id
     })
 
-    # need to first disassociate the private subnet from the default
-    # route table
-
-    resp = self.ec2client().describe_route_tables({
-      filters: [
-        { name: "vpc-id", values: [self.vpc.id]},
-        { name: "association.subnet-id", values: [self.privateSubnet().id]}
-      ],
-    })
-
-    # find the association between the private subnet and the default route
-    assoc = nil
-    for table in resp.route_tables.each
-      a = table.associations.detect { | a | a.subnet_id == self.privateSubnet().id }
-      if (a)
-        assoc = a
-      end
-    end
-
-    # disassociate
-    if (assoc)
-      puts("disassociating #{assoc.route_table_association_id}\n")
-      resp = self.ec2client().disassociate_route_table({
-        association_id: (assoc.route_table_association_id)
-        })
-    else
-      puts("no rt association found for #{self.privateSubnet().id}\n")
-    end
-
-    # associate the route table with the private subnet
-    puts("associating new route table with private subnet\n")
-    resp = self.ec2client().associate_route_table({
-      route_table_id: (new_table.route_table[:route_table_id]),
-      subnet_id: self.privateSubnet().id})
-    puts("created: #{resp[:association_id]}\n")
+    puts("associating route table to subnet\n")
+    assoc = new_table.associate_with_subnet({subnet_id: self.privateSubnet().id})
+    #puts("created: #{resp[:association_id]}\n")
+    puts("created association: #{assoc.id}\n")
 
   end
 
@@ -241,7 +193,9 @@ class VpcBuilder
     return 'us-east-1a'
   end
 
-  attr_accessor :ec2resource, :ec2client , :vpc, :igw,
+  attr_accessor :ec2resource,
+  #:ec2client ,
+    :vpc, :igw,
     :publicSubnet, :privateSubnet, :sshSecurityGroup
 
 end
