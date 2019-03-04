@@ -145,19 +145,32 @@ class VpcBuilder
     puts("initializing NAT gw #{nat_gateway_id}, waiting until available\n")
     # time now
     start = Time.now.to_i
-    gw_status = nil
-    # loop until NAT gw is available
-    while (!(gw_status && gw_status.state == "available"))
-      sleep(10)  # need something better
-      resp = self.ec2client.describe_nat_gateways({
-        filter: [
-          {name: "nat-gateway-id",values: [nat_gateway_id]},
-          {name: "vpc-id",values: [self.vpc.id]}
-        ]})
-        gw_status = resp.nat_gateways.detect { | gw | gw.nat_gateway_id == nat_gateway_id}
-        puts("#{nat_gateway_id} status is #{gw_status.state}\n")
 
+
+    begin
+      self.ec2client.wait_until(:nat_gateway_available, nat_gateway_ids: [nat_gateway_id])
+    rescue Aws::Waiters::Errors::WaiterFailed
+      # resource did not enter the desired state in time
+      puts("waited for NAT gw #{nat_gateway_id} but it did not complete in time")
+      exit
     end
+
+
+    # gw_status = nil
+    # # loop until NAT gw is available
+    # while (!(gw_status && gw_status.state == "available"))
+    #   sleep(10)  # need something better
+    #   resp = self.ec2client.describe_nat_gateways({
+    #     filter: [
+    #       {name: "nat-gateway-id",values: [nat_gateway_id]},
+    #       {name: "vpc-id",values: [self.vpc.id]}
+    #     ]})
+    #     gw_status = resp.nat_gateways.detect { | gw | gw.nat_gateway_id == nat_gateway_id}
+    #     puts("#{nat_gateway_id} status is #{gw_status.state}\n")
+    #
+    # end
+
+
     finish = Time.now.to_i
     puts("#{finish-start} seconds to create NAT gw\n")
 
