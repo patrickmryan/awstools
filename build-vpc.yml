@@ -1,0 +1,169 @@
+### AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  # EnvironmentName:
+  #   Description: Environment Name
+  #   Type: String
+  #   AllowedValues: [development, production]
+  #   ConstraintDescription: must be development or production
+  # NameTag:
+  #   Type: String
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instances
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+#Mappings:
+
+Resources:
+  EC2VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: "Visibility"
+          Value: "Public"
+        - Key: "Name"
+          Value: !Sub '${AWS::StackName} - public'
+      VpcId: !Ref 'EC2VPC'
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.2.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: "Visibility"
+          Value: "Private"
+        - Key: "Name"
+          Value: !Sub '${AWS::StackName} - private '
+      VpcId: !Ref EC2VPC
+
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref EC2VPC
+      InternetGatewayId: !Ref InternetGateway
+
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref EC2VPC
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    Properties:
+       RouteTableId: !Ref 'PublicRouteTable'
+       DestinationCidrBlock: 0.0.0.0/0
+       GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PublicSubnet'
+      RouteTableId: !Ref PublicRouteTable
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: 'vpc'
+    DependsOn: EC2VPC
+
+  PrivateGatewayToInternet:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId:
+        Fn::GetAtt:
+         - ElasticIP
+         - AllocationId
+      SubnetId: !Ref 'PublicSubnet'
+
+  NatToInternetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref EC2VPC
+
+  GatewayToInternetRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref 'NatToInternetRouteTable'
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref PrivateGatewayToInternet
+
+  GatewaySubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref 'PrivateSubnet'
+      RouteTableId: !Ref NatToInternetRouteTable
+
+  PublicEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      #InstanceType: t2.micro
+      ImageId: "ami-0b898040803850657"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          SubnetId: !Ref PublicSubnet
+          GroupSet:
+            - !Ref ExternalSshAccess
+      Tags:
+        - Key: "Name"
+          Value: "public instance"
+
+  PrivateEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      KeyName: !Ref KeyName
+      #InstanceType: t2.micro
+      ImageId: "ami-0b898040803850657"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: "false"
+          DeviceIndex: "0"
+          SubnetId: !Ref PrivateSubnet
+          GroupSet:
+            - !Ref ExternalSshAccess
+      Tags:
+        - Key: "Name"
+          Value: "private instance"
+
+  ExternalSshAccess:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+        GroupDescription: Allow ssh to client host
+        VpcId: !Ref EC2VPC
+        SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # InternalSshAccess:
+  #   Type: AWS::EC2::SecurityGroup
+  #   Properties:
+  #       GroupDescription: Allow ssh to client host
+  #       VpcId: !Ref EC2VPC
+  #       SecurityGroupIngress:
+  #       - IpProtocol: tcp
+  #         FromPort: 22
+  #         ToPort: 22
+  #         CidrIp:  !Ref EC2VPC    #!Ref PublicSubnet
+  #           # - Fn::GetAtt:
+  #           #   - PublicSubnet
+  #           #   - VpcId
